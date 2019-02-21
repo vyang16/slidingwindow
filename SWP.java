@@ -88,7 +88,7 @@ public class SWP {
   private int ack_expected = 0;                     //Lower bound sender's window
   private int next_frame_to_send = 0;               //Upper bound sender's window
   private int frame_expected = 0;                   //Lower bound receiver's window
-  private int too_far = 0;                          //Upper bound receiver's window
+  private int too_far = NR_BUFS;                          //Upper bound receiver's window
   private boolean no_nak = true;
   private Packet in_buf[] = new Packet[NR_BUFS];
   private boolean arrived[] = new boolean[NR_BUFS]; //Bit Map
@@ -107,17 +107,17 @@ public class SWP {
   public void send_frame(int type, int seqnr, int seqnr_exp, Packet buffer[] ){
     PFrame s = new PFrame();
     s.kind = type;
-    s.seq = seqnr;
-    s.ack = (seqnr_exp+MAX_SEQ)%(MAX_SEQ+1);
     //can be DATA, ACK or NAK
     if(type == PFrame.DATA){
       s.info = buffer[seqnr%NR_BUFS];
     }
-    if (type == PFrame.NAK){
+    s.seq = seqnr;
+    s.ack = (seqnr_exp+MAX_SEQ)%(MAX_SEQ+1);
+    if (s.kind == PFrame.NAK){
       no_nak = false;
     }
     to_physical_layer(s);
-    if(type ==PFrame.DATA){
+    if(s.kind ==PFrame.DATA){
       start_timer(seqnr);
     }
     stop_ack_timer();
@@ -125,9 +125,15 @@ public class SWP {
 
   public void protocol6() {
     init();
+
+    for(int i=0; i<NR_BUFS; i++){
+      arrived[i] = false;
+    }
+
     enable_network_layer(NR_BUFS);  //fill with frames from network layer
     PFrame r = new PFrame();  //received frame
     PFrame s = new PFrame();  //sending frame
+
     while(true) {
       wait_for_event(event);
       switch(event.type) {
@@ -146,6 +152,8 @@ public class SWP {
             if((r.seq != frame_expected)&& no_nak){
               //wrong frame, send NAK if we haven't done it yet
               send_frame(PFrame.NAK, 0, frame_expected, out_buf);
+            }else{
+              start_ack_timer();
             }
             if(between(frame_expected, r.seq, too_far)&&(!arrived[r.seq%NR_BUFS])){
                 //buffer frame
@@ -170,7 +178,7 @@ public class SWP {
             nbuffered--;
             stop_timer(ack_expected% NR_BUFS);
             ack_expected = inc(ack_expected);
-            //enable_network_layer(1); //each time an ack arrives, send the next frame
+            enable_network_layer(1); //each time an ack arrives, send the next frame
           }
 
           break;
@@ -199,6 +207,7 @@ public class SWP {
     than the index of the timer array,
     of the frame associated with this timer,
    */
+
   private  Timer retr_timers[] = new Timer[MAX_SEQ];
   private Timer ack_timer;
   public int TR_DUR = 200; //in ms
@@ -236,7 +245,6 @@ public class SWP {
 
   }
 
-
   public class ACKTask extends TimerTask{
     @Override
     public void run(){
@@ -258,19 +266,6 @@ public class SWP {
       ack_timer = null;
     }
   }
-
-  //Do not know if needed
-  /*
-  private void start_aux_timer(int seq){
-
-  }
-
-  private void stop_aux_timer(int seq){
-
-  }
-*/
-
-
 
 }//End of class
 
