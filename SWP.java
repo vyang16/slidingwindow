@@ -2,7 +2,7 @@
  *  File: SWP.java                                               *
  *                                                               *
  *  This class implements the sliding window protocol            *
- *  Used by VMach class					         *
+ *  Used by VMach class				                                   *
  *  Uses the following classes: SWE, Packet, PFrame, PEvent,     *
  *                                                               *
  *  Author: Professor SUN Chengzheng                             *
@@ -93,13 +93,14 @@ public class SWP {
   private Packet in_buf[] = new Packet[NR_BUFS];
   private boolean arrived[] = new boolean[NR_BUFS]; //Bit Map
   private int nbuffered = 0;
-
+  private long rtt = 0;
 
   //b needs to be either [a b c], c] [a b or b c] [a to be in the window
   static boolean between(int a, int b, int c) {
     return (((a<=b) && (b<c)) || ((c<a) && (a<=b)) || ((b<c) && (c<a)));
   }
 
+  //increment function with wrap around
   public int inc(int frame){
      return ((frame+1)%(MAX_SEQ+1)); //wrap around
   }
@@ -107,16 +108,16 @@ public class SWP {
   public void send_frame(int type, int seqnr, int seqnr_exp, Packet buffer[] ){
     PFrame s = new PFrame();
     s.kind = type;
-    //can be DATA, ACK or NAK
+    //can be DATA or NAK, ACK will be piggy-backed on DATA frame
     if(type == PFrame.DATA){
       s.info = buffer[seqnr%NR_BUFS];
     }
     s.seq = seqnr;
-    s.ack = (seqnr_exp+MAX_SEQ)%(MAX_SEQ+1);
+    s.ack = (seqnr_exp+MAX_SEQ)%(MAX_SEQ+1); //piggy back
     if (s.kind == PFrame.NAK){
-      no_nak = false;
+      no_nak = false; //NAK has been received, prevents multiple NAKs
     }
-    to_physical_layer(s);
+    to_physical_layer(s); //send frame
     if(s.kind ==PFrame.DATA){
       start_timer(seqnr);
     }
@@ -126,6 +127,7 @@ public class SWP {
   public void protocol6() {
     init();
 
+    //initialize bit map
     for(int i=0; i<NR_BUFS; i++){
       arrived[i] = false;
     }
@@ -141,6 +143,8 @@ public class SWP {
           nbuffered++;
           //send frame, increase sender window upper bound by one
           from_network_layer(out_buf[next_frame_to_send%NR_BUFS]);
+          //System.out.print("Sending frame at ");
+          //System.out.println(System.currentTimeMillis());
           send_frame(PFrame.DATA, next_frame_to_send, frame_expected, out_buf);
           next_frame_to_send = inc(next_frame_to_send);
           break;
@@ -149,6 +153,8 @@ public class SWP {
           //if not, buffer frame if frame is in accepting window,
           from_physical_layer(r);
           if(r.kind == PFrame.DATA){
+            //System.out.print("Receiving frame at ");
+            //System.out.println(System.currentTimeMillis());
             if((r.seq != frame_expected)&& no_nak){
               //wrong frame, send NAK if we haven't done it yet
               send_frame(PFrame.NAK, 0, frame_expected, out_buf);
@@ -170,7 +176,8 @@ public class SWP {
                 }
             }
           }
-          if((r.kind == PFrame.NAK) && between(ack_expected, (r.ack+1)%(MAX_SEQ+1), next_frame_to_send)){
+          if((r.kind == PFrame.NAK) && between(ack_expected,
+            (r.ack+1)%(MAX_SEQ+1), next_frame_to_send)){
             send_frame(PFrame.DATA, (r.ack+1)%(MAX_SEQ+1), frame_expected, out_buf);
           }
 
@@ -208,10 +215,10 @@ public class SWP {
     of the frame associated with this timer,
    */
 
-  private  Timer retr_timers[] = new Timer[MAX_SEQ];
+  private  Timer retr_timers[] = new Timer[NR_BUFS];
   private Timer ack_timer;
-  public int TR_DUR = 200; //in ms
-  public int ACK_DUR = 50; //in ms
+  public int TR_DUR = 300; //in ms
+  public int ACK_DUR = 75; //in ms
 
   public class TimeoutTask extends TimerTask{
     private int seq;
@@ -238,7 +245,11 @@ public class SWP {
 
   private void stop_timer(int seq) {
     try{
-      retr_timers[seq].cancel();
+      if(retr_timers[seq%NR_BUFS] != null){
+        retr_timers[seq%NR_BUFS].cancel();
+        retr_timers[seq%NR_BUFS].purge();
+        retr_timers[seq%NR_BUFS] = null;
+      }
     }catch(Exception e){
       System.out.println("Could not stop timer of" + seq);
     }
@@ -263,6 +274,7 @@ public class SWP {
   private void stop_ack_timer() {
     if(ack_timer != null){
       ack_timer.cancel();
+      ack_timer.purge();
       ack_timer = null;
     }
   }
